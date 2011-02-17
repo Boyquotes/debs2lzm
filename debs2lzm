@@ -1,0 +1,234 @@
+#!/bin/bash
+#converti les paquets Debian .DEB en fichier compresse .lzm 
+#ils peuvent etre utilise comme module pour les LiveCD base sur debian et linux live script comme par exemple PureOS
+#
+#Auteur: Nicolas Villa <http://www.linux-live-cd.org>
+#
+#
+echo "Fabrication de modules .lzm à partir de .deb officiels pour une utilisation avec le live CD, il est également possible d'utiliser debs2nod (.nod) puis nodinstall pour installer directement des .deb téléchargés"
+
+update=`find /var/lib/apt/ -mtime -1 | grep "/var/lib/apt/lists$"`
+  if [ $update="" ]; then
+      echo "Listes des paquets à jour, pas besoin de apt-get update"
+  else
+      echo "Mise à jour des listes de paquets depuis internet,cdrom,mirroir local..."
+      apt-get update
+  fi
+
+echo "Nettoyage du cache apt"
+#Nettoyage du cache debian et téléchargement des paquets et deplacement de ceux ci dans tmp
+apt-get clean && apt-get -dy --force-yes install $1 >> /tmp/down.txt
+  if [ $? -ne 0 ]; then
+    echo "Le paquet $1 n'existe pas"
+    exit 1;
+  else
+mkdir /tmp/$1
+mv /var/cache/apt/archives/*.deb /tmp/$1/
+mv /tmp/down.txt /tmp/$1
+#Création du répertoire pour la reception de l'extraction
+echo $1
+rep_ext=/tmp/$1_ext
+mkdir $rep_ext
+logi=$1
+
+#Extraction de chaque deb contenu dans le repertoire no_dep
+ls /tmp/$1/ > /tmp/$1_debetdep
+echo "Extraction du paquet et de ses dépendances"
+fichier4="/tmp/$1_debetdep";
+sed -i 's/down.txt//g' $fichier4
+sed -i '/^$/d' $fichier4
+while read line
+do
+echo "$line dans $rep_ext"
+dpkg --extract /tmp/$logi/$line $rep_ext
+done < $fichier4
+#fin fichier extraction des debs
+
+#Recuperation des informations pour le fichier .desktop
+if [ ! -e /usr/share/applications/$logi.desktop ]
+package=`apt-cache show $1 | grep Package:  | sed 's/Package: //g'| sed 's/^./\u&/'`
+section=`apt-cache show $1 | grep Section:  | sed 's/Section: //g'| sed 's/^./\u&/'`
+echo "[Desktop Entry]" > $rep_ext/$1.desktop
+echo "Name=$package" >> $rep_ext/$1.desktop
+echo "Type=Application" >> $rep_ext/$1.desktop
+echo "Exec=$1" >> $rep_ext/$1.desktop
+echo "Icon=$1"  >> $rep_ext/$1.desktop
+echo "Categories=Modules" >>  $rep_ext/$1.desktop
+
+mkdir -p $rep_ext/usr/share/applications/
+mv $rep_ext/$1.desktop $rep_ext/usr/share/applications/
+then
+    echo "le fichier /usr/share/applications/$logi.desktop vient d'être générer";
+else
+echo "le fichier .desktop existait déjà"
+fi
+#Fin Recuperation des informations pour le fichier .desktop
+
+#Recuperation de l'icone du logiciel
+#Detection du Bureau utilise KDE, XFCE, GNOME
+# This sets the information to be displayed. Available: OS, Kernel, DE, WM, Win_theme, Theme, Icons, Font, ASCII. To get just the information, and not a text-art logo, you would take "ASCII" out of the below variable.
+display="OS Kernel DE WM Win_theme Theme Icons Font"
+
+#DE process names
+denames="gnome-session xfce-mcs-manage xfce4-session ksmserver lxsession gnome-settings-daemon"
+
+# DE Detection - Begin
+detectde () {
+  DE="Not Present"
+  for each in $denames; do
+    if pidof $each >/dev/null; then
+      [ "$each" == "gnome-session" -o "$each" == "gnome-settings-daemon" ] && DE="GNOME" && DEver=`gnome-session --version | awk {'print $NF'}`
+      [ "$each" == "xfce-mcs-manage" -o "$each" == "xfce4-session" ] && DE="XFCE" && DEver=`xfce4-settings-manager --version | grep -m 1 "" | awk {'print $2'}`
+      [ "$each" == "ksmserver" ] && DE="KDE" && DEver=`kwin --version | awk '/^Qt/ {data="Qt v" $2};/^KDE/ {data=$2 " (" data ")"};END{print data}'`
+      [ "$each" == "lxsession" ] && DE="LXDE"
+    fi
+  done
+#echo $DE
+}
+### DE Detection - End
+
+# GTK Theme\Icon\Font Detection - BEGIN
+detectgtk () {
+  gtkTheme="Not Found"
+  gtkIcons="Not Found"
+  gtkFont="Not Found"
+  case $DE in
+    'KDE')  # Desktop Environment found as "KDE"
+          if [ -a $HOME/.kde/share/config/kdeglobals ]; then
+            if grep -q "widgetStyle=" $HOME/.kde/share/config/kdeglobals; then
+              gtkTheme=$(awk -F"=" '/widgetStyle=/ {print $2}' $HOME/.kde/share/config/kdeglobals)
+            elif grep -q "colorScheme=" $HOME/.kde/share/config/kdeglobals; then
+              gtkTheme=$(awk -F"=" '/colorScheme=/ {print $2}' $HOME/.kde/share/config/kdeglobals)
+            fi
+
+            if [[ "$display" =~ "Icons" ]] && grep -q "Theme=" $HOME/.kde/share/config/kdeglobals; then
+              gtkIcons=$(awk -F"=" '/Theme=/ {print $2}' $HOME/.kde/share/config/kdeglobals)
+            fi
+
+            if [[ "$display" =~ "Font" ]] && grep -q "Font=" $HOME/.kde/share/config/kdeglobals; then
+                gtkFont=$(awk -F"=" '/Font=/ {print $2}' $HOME/.kde/share/config/kdeglobals)
+            fi
+          fi
+  ;;
+  'GNOME')  # Desktop Environment found as "GNOME"
+          if which gconftool >/dev/null 2>&1; then
+            gtkTheme=$(gconftool-2 -g /desktop/gnome/interface/gtk_theme)
+          fi
+
+          if [[ "$display" =~ "Icons" ]] && which gconftool >/dev/null 2>&1; then
+              gtkIcons=$(gconftool-2 -g /desktop/gnome/interface/icon_theme)
+          fi
+
+          if [[ "$display" =~ "Font" ]] && which gconftool >/dev/null 2>&1; then
+            gtkFont=$(gconftool-2 -g /desktop/gnome/interface/font_name)
+          fi
+  ;;
+  'XFCE')  # Desktop Environment found as "XFCE"
+         if which xfconf-query >/dev/null 2>&1; then
+           gtkTheme=$(xfconf-query -c xsettings -p /Net/ThemeName)
+         fi
+
+         if [[ "$display" =~ "Icons" ]] && which xfconf-query >/dev/null 2>&1; then
+           gtkIcons=$(xfconf-query -c xsettings -p /Net/IconThemeName)
+         fi
+
+         if [[ "$display" =~ "Font" ]] && which xfconf-query >/dev/null 2>&1; then
+           gtkFont=$(xfconf-query -c xsettings -p /Gtk/FontName)
+         fi
+  ;;
+
+# /home/me/.config/rox.sourceforge.net/ROX-Session/Settings.xml
+
+  *) # Lightweight or No DE Found
+    if [ -f $HOME/.gtkrc-2.0 ]; then
+      if grep -q gtk-theme $HOME/.gtkrc-2.0; then 
+         gtkTheme=$(awk -F'"' '/gtk-theme/ {print $2}' $HOME/.gtkrc-2.0)
+      fi
+
+      if [[ "$display" =~ "Icons" ]] && grep -q icon-theme $HOME/.gtkrc-2.0; then
+          gtkIcons=$(awk -F'"' '/icon-theme/ {print $2}' $HOME/.gtkrc-2.0)
+      fi
+
+      if [[ "$display" =~ "Font" ]] && grep -q font $HOME/.gtkrc-2.0; then
+          gtkFont=$(awk -F'"' '/font/ {print $2}' $HOME/.gtkrc-2.0)
+      fi
+    # LXDE
+    elif [ -f $HOME/.config/lxde/config ]; then
+      if grep -q "sNet\/ThemeName" $HOME/.config/lxde/config; then 
+         gtkTheme=$(awk -F'=' '/sNet\/ThemeName/ {print $2}' $HOME/.config/lxde/config)
+      fi
+
+      if [[ "$display" =~ "Icons" ]] && grep -q IconThemeName $HOME/.config/lxde/config; then
+          gtkIcons=$(awk -F'=' '/sNet\/IconThemeName/ {print $2}' $HOME/.config/lxde/config)
+      fi
+
+      if [[ "$display" =~ "Font" ]] && grep -q FontName $HOME/.config/lxde/config; then
+          gtkFont=$(awk -F'=' '/sGtk\/FontName/ {print $2}' $HOME/.config/lxde/config)
+      fi
+    fi
+    # $HOME/.gtkrc.mine theme detect only
+    if [ -f $HOME/.gtkrc.mine ]; then
+      if grep -q "^include" $HOME/.gtkrc.mine; then
+        gtkTheme=$(awk -F"/" '/^include/ { getline; print $5}' $HOME/.gtkrc.mine)
+      fi
+    fi
+    # ROX-Filer icon detect only
+    if [ -a $HOME/.config/rox.sourceforge.net/ROX-Filer/Options ]; then
+      gtkIcons=$(awk -F'[>,<]' '/icon_theme/ {print $3}' $HOME/.config/rox.sourceforge.net/ROX-Filer/Options)
+    fi
+  ;;
+  esac
+    #echo "Finding GTK theme...found as '$gtkTheme'"
+    #echo "Finding icon theme...found as '$gtkIcons'"
+    #echo "Finding user font...found as '$gtkFont'"
+echo "/usr/share/icons/$gtkIcons"
+}
+# GTK Theme\Icon\Font Detection - END
+detectde
+detectgtk
+
+if [ ! -e $rep_ext/usr/share/icons/$gtkIcons/32x32/apps/$1.png ];then
+find $rep_ext/usr/share/ -name $1*.png > /tmp/$logi-icones
+find $rep_ext/usr/share/ -name $1*.jpg > /tmp/$logi-icones
+find $rep_ext/usr/share/ -name $1*.xpm > /tmp/$logi-icones
+
+fichier_icones="/tmp/$logi-icones";
+
+while read icones
+do
+j=$(($j+1))
+echo $icones
+cp $icones $rep_ext/$logi-$j.png
+echo "Une icone a été trouvé"
+done < $fichier_icones
+
+
+mkdir -p $rep_ext/usr/share/icons/$gtkIcons/32x32/apps/
+
+if [ -f $rep_ext/$logi-1.png ]; then
+  cp $rep_ext/$logi-1.png $rep_ext/usr/share/icons/$gtkIcons/32x32/apps/$logi.png
+else
+  cp /usr/share/icons/$gtkIcons/32x32/apps/preferences-plugin.png $rep_ext/usr/share/icons/$gtkIcons/32x32/apps/$logi.png
+  echo "l'icone est non-existante, icone module lzm par defaut."
+fi
+
+else
+    echo "le fichier /usr/share/icons/$logi.png|svg existe deja, pas besoin de le récupérer";
+fi
+#Fin Recuperation de l'icone du logiciel sinon celle par defaut
+
+#Recuperation version et architecture
+version=`cat /tmp/"$logi"_debetdep | grep ^$logi | cut -d"_" -f2`
+archi=`cat /tmp/"$logi"_debetdep | grep ^$logi | cut -d"_" -f3 | sed 's/.deb//g'`
+
+#Compression des .deb en module lzm
+dir2lzm $rep_ext ./$logi-$version-$archi-$DE.lzm
+#Fin Compression des .deb en module lzm
+
+#Nettoyage de /tmp
+#rm -rf $rep_ext /tmp/$logi $fichier4
+#fin de création du module
+echo ""
+echo "Le logiciel passé en argument de la commande debs2lzm et ses dépendances, ont été téléchargés, extraits puis compressés en .lzm, ces modules sont directement utilisable avec PureOS grâce à la commande activate"
+echo "fin du script" 
+fi

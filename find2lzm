@@ -1,0 +1,175 @@
+#!/bin/bash
+#converti les paquets Debian .DEB en fichier compresse .lzm 
+#ils peuvent etre utilise comme module pour les LiveCD base sur debian et linux live script comme par exemple PureOS
+#
+#Auteur: Nicolas Villa <http://www.linux-live-cd.org>
+#
+#
+echo "Fabrication de modules .lzm à partir de .deb officiels pour une utilisation avec le live CD, il est également possible d'utiliser debs2nod (.nod) puis nodinstall pour installer directement des .deb téléchargés"
+
+update=`find /var/lib/apt/ -mtime -1 | grep "/var/lib/apt/lists$"`
+  if [ $update="" ]; then
+      echo "Listes des paquets à jour, pas besoin de apt-get update"
+  else
+      echo "Mise à jour des listes de paquets depuis internet,cdrom,mirroir local..."
+      apt-get update
+  fi
+
+#Recuperation de l'icone du logiciel
+#Detection du Bureau utilise KDE, XFCE, GNOME
+# This sets the information to be displayed. Available: OS, Kernel, DE, WM, Win_theme, Theme, Icons, Font, ASCII. To get just the information, and not a text-art logo, you would take "ASCII" out of the below variable.
+display="OS Kernel DE WM Win_theme Theme Icons Font"
+
+#DE process names
+denames="gnome-session xfce-mcs-manage xfce4-session ksmserver lxsession gnome-settings-daemon"
+
+# DE Detection - Begin
+detectde () {
+  DE="Not Present"
+  for each in $denames; do
+    if pidof $each >/dev/null; then
+      [ "$each" == "gnome-session" -o "$each" == "gnome-settings-daemon" ] && DE="GNOME" && DEver=`gnome-session --version | awk {'print $NF'}`
+      [ "$each" == "xfce-mcs-manage" -o "$each" == "xfce4-session" ] && DE="XFCE" && DEver=`xfce4-settings-manager --version | grep -m 1 "" | awk {'print $2'}`
+      [ "$each" == "ksmserver" ] && DE="KDE" && DEver=`kwin --version | awk '/^Qt/ {data="Qt v" $2};/^KDE/ {data=$2 " (" data ")"};END{print data}'`
+      [ "$each" == "lxsession" ] && DE="LXDE"
+    fi
+  done
+#echo $DE
+}
+### DE Detection - End
+
+# GTK Theme\Icon\Font Detection - BEGIN
+detectgtk () {
+  gtkTheme="Not Found"
+  gtkIcons="Not Found"
+  gtkFont="Not Found"
+  case $DE in
+    'KDE')  # Desktop Environment found as "KDE"
+          if [ -a $HOME/.kde/share/config/kdeglobals ]; then
+            if grep -q "widgetStyle=" $HOME/.kde/share/config/kdeglobals; then
+              gtkTheme=$(awk -F"=" '/widgetStyle=/ {print $2}' $HOME/.kde/share/config/kdeglobals)
+            elif grep -q "colorScheme=" $HOME/.kde/share/config/kdeglobals; then
+              gtkTheme=$(awk -F"=" '/colorScheme=/ {print $2}' $HOME/.kde/share/config/kdeglobals)
+            fi
+
+            if [[ "$display" =~ "Icons" ]] && grep -q "Theme=" $HOME/.kde/share/config/kdeglobals; then
+              gtkIcons=$(awk -F"=" '/Theme=/ {print $2}' $HOME/.kde/share/config/kdeglobals)
+            fi
+
+            if [[ "$display" =~ "Font" ]] && grep -q "Font=" $HOME/.kde/share/config/kdeglobals; then
+                gtkFont=$(awk -F"=" '/Font=/ {print $2}' $HOME/.kde/share/config/kdeglobals)
+            fi
+          fi
+  ;;
+  'GNOME')  # Desktop Environment found as "GNOME"
+          if which gconftool >/dev/null 2>&1; then
+            gtkTheme=$(gconftool-2 -g /desktop/gnome/interface/gtk_theme)
+          fi
+
+          if [[ "$display" =~ "Icons" ]] && which gconftool >/dev/null 2>&1; then
+              gtkIcons=$(gconftool-2 -g /desktop/gnome/interface/icon_theme)
+          fi
+
+          if [[ "$display" =~ "Font" ]] && which gconftool >/dev/null 2>&1; then
+            gtkFont=$(gconftool-2 -g /desktop/gnome/interface/font_name)
+          fi
+  ;;
+  'XFCE')  # Desktop Environment found as "XFCE"
+         if which xfconf-query >/dev/null 2>&1; then
+           gtkTheme=$(xfconf-query -c xsettings -p /Net/ThemeName)
+         fi
+
+         if [[ "$display" =~ "Icons" ]] && which xfconf-query >/dev/null 2>&1; then
+           gtkIcons=$(xfconf-query -c xsettings -p /Net/IconThemeName)
+         fi
+
+         if [[ "$display" =~ "Font" ]] && which xfconf-query >/dev/null 2>&1; then
+           gtkFont=$(xfconf-query -c xsettings -p /Gtk/FontName)
+         fi
+  ;;
+
+# /home/me/.config/rox.sourceforge.net/ROX-Session/Settings.xml
+
+  *) # Lightweight or No DE Found
+    if [ -f $HOME/.gtkrc-2.0 ]; then
+      if grep -q gtk-theme $HOME/.gtkrc-2.0; then 
+         gtkTheme=$(awk -F'"' '/gtk-theme/ {print $2}' $HOME/.gtkrc-2.0)
+      fi
+
+      if [[ "$display" =~ "Icons" ]] && grep -q icon-theme $HOME/.gtkrc-2.0; then
+          gtkIcons=$(awk -F'"' '/icon-theme/ {print $2}' $HOME/.gtkrc-2.0)
+      fi
+
+      if [[ "$display" =~ "Font" ]] && grep -q font $HOME/.gtkrc-2.0; then
+          gtkFont=$(awk -F'"' '/font/ {print $2}' $HOME/.gtkrc-2.0)
+      fi
+    # LXDE
+    elif [ -f $HOME/.config/lxde/config ]; then
+      if grep -q "sNet\/ThemeName" $HOME/.config/lxde/config; then 
+         gtkTheme=$(awk -F'=' '/sNet\/ThemeName/ {print $2}' $HOME/.config/lxde/config)
+      fi
+
+      if [[ "$display" =~ "Icons" ]] && grep -q IconThemeName $HOME/.config/lxde/config; then
+          gtkIcons=$(awk -F'=' '/sNet\/IconThemeName/ {print $2}' $HOME/.config/lxde/config)
+      fi
+
+      if [[ "$display" =~ "Font" ]] && grep -q FontName $HOME/.config/lxde/config; then
+          gtkFont=$(awk -F'=' '/sGtk\/FontName/ {print $2}' $HOME/.config/lxde/config)
+      fi
+    fi
+    # $HOME/.gtkrc.mine theme detect only
+    if [ -f $HOME/.gtkrc.mine ]; then
+      if grep -q "^include" $HOME/.gtkrc.mine; then
+        gtkTheme=$(awk -F"/" '/^include/ { getline; print $5}' $HOME/.gtkrc.mine)
+      fi
+    fi
+    # ROX-Filer icon detect only
+    if [ -a $HOME/.config/rox.sourceforge.net/ROX-Filer/Options ]; then
+      gtkIcons=$(awk -F'[>,<]' '/icon_theme/ {print $3}' $HOME/.config/rox.sourceforge.net/ROX-Filer/Options)
+    fi
+  ;;
+  esac
+    #echo "Finding GTK theme...found as '$gtkTheme'"
+    #echo "Finding icon theme...found as '$gtkIcons'"
+    #echo "Finding user font...found as '$gtkFont'"
+echo "/usr/share/icons/$gtkIcons"
+}
+# GTK Theme\Icon\Font Detection - END
+detectde
+detectgtk
+
+#Recuperation version et architecture
+#version=`cat /tmp/"$logi"_debetdep | grep ^$logi | cut -d"_" -f2`
+#archi=`cat /tmp/"$logi"_debetdep | grep ^$logi | cut -d"_" -f3 | sed 's/.deb//g'`
+temps0=`hwclock | awk {'print $5'} | cut -d":" -f2`
+echo $temps0
+
+apt-get -y install $1
+temps1=`hwclock | awk {'print $5'} | cut -d":" -f2`
+echo $temps1
+
+ecart=$[ $temps1 - $temps0 ]
+echo $ecart
+
+if [ -n $ecart ]
+then
+ecart="1"
+echo $ecart
+else
+echo $ecart
+fi
+
+mkdir ./$1
+find /{bin,usr,etc,var} -type f -cmin -$ecart | grep -v "dpkg" | grep -v "/var/tmp/"  | grep -v "/var/log/" | grep -v "/var/cache" | grep -v "var/lib/apt/extended_states" |xargs tar cvf $1/$1.tar
+tar xvf $1/$1.tar -C $1/
+rm -rf $1/$1.tar
+#Compression des .deb en module lzm
+dir2lzm $1 ./$1-$version-$archi-$DE.lzm
+#Fin Compression des .deb en module lzm
+
+#Nettoyage de /tmp
+#rm -rf $rep_ext /tmp/$logi $fichier4
+#fin de création du module
+echo ""
+echo "Le logiciel passé en argument de la commande find2lzm et ses dépendances, ont été téléchargés, extraits puis compressés en .lzm, ces modules sont directement utilisable avec PureOS grâce à la commande activate"
+echo "fin du script" 
