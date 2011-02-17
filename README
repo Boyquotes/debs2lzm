@@ -1,0 +1,8 @@
+#converti les paquets Debian .DEB en fichier compresse .lzm 
+#ils peuvent etre utilise comme module pour les LiveCD base sur debian et linux live script comme par exemple PureOS
+#
+#Auteur: Nicolas Villa <http://www.linux-live-cd.org>
+#
+#
+Fabrication de modules .lzm à partir de .deb officiels pour une utilisation avec le live CD, il est également possible d'utiliser debs2nod (.nod) puis nodinstall pour installer directement des .deb téléchargés
+
